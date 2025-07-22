@@ -1,0 +1,289 @@
+//M-102 Product Tracking
+
+//disclaimer, does not include when to open wastegate, does not incorporate discrepancy for which unit a blanket wash starts,
+//both tracking systems work indepenently -- NOT realistic, neither was my timeframe :)
+
+#include <stdio.h>
+#include <math.h>
+#include <stdbool.h>
+
+// DEFINE CONSTANT CUT CYLINDER COUNTS FOR LINEAR DISTANCE FROM SPLICER TO "x" MACHINERY //TOTAL IS 287
+#define SPLICER_UNIT_1 35
+#define SPLICER_UNIT_2 39
+#define SPLICER_UNIT_3 43
+#define SPLICER_UNIT_4 47
+#define SPLICER_SLITTER 123
+
+//DEFINE CONSTANT CUT CYLINDER COUNTS FOR INTERMEDIATE (in-between) POSITIONS INTO FORMER
+#define SLITTER_TO_ANGLE_BAR 1
+#define ANGLE_BAR_FORWARD_TO_COMPENSATOR 5
+#define COMPENSATOR_REVERSE_TO_IDLER 8
+#define ANGLE_BAR_REVERSE_TO_IDLER 4
+#define FRONT_FORMER_DISTANCE 10
+
+//DEFINE CONSTANT PROX LOBE COUNTS FOR PRODUCT TO EXIT CONVEYOR
+#define DELIVERY_A 9
+#define BUMP_TURN_IN_A 38
+#define BUMP_TURN_OUT_A 27
+#define OVERHEAD_A1 107
+#define OVERHEAD_A2 107
+#define OVERHEAD_A3 107
+#define OVERHEAD_A4 107
+#define WASTE_CONVEYOR 12
+
+//DEFINE MACHINE CONSTANTS
+#define SHAFT_DIAMETER_INCHES 2.5
+#define PROX_LOBES_PER_REV 4
+#define PI 3.1416
+#define CIRCUMFERENCE_FEET (PI * SHAFT_DIAMETER_INCHES / 12.0)
+#define FEET_PER_PROX_PULSE (CIRCUMFERENCE_FEET / PROX_LOBES_PER_REV)
+
+//GO/NOGO
+#define TEN_PERCENT 250.0
+#define MAX_SPEED 3000.0
+
+//EVENT WINDOWS
+#define PRE_WINDOW 30.0
+#define POST_WINDOW  20.0
+#define CUTOFF_FEET 1.894
+#define WINDOW_LENGTH ((PRE_WINDOW + POST_WINDOW) * CUTOFF_FEET)
+#define BLANKET_WASH_SECONDS 60.0
+
+//LINEAR DISTANCE PER SINGLE ENCODER PULSE IN FEET
+#define FEET_PER_PULSE_CUT_CYL_ENCODER 0.0009248
+
+//DEFINE PROX CONVEYOR NUMBER COUNT
+#define NUM_CONVEYORS 8
+
+
+
+// FUNCTION PROTOTYPES
+void simulate_cut_cylinder(double feet_per_min, int waste_impressions);
+void simulate_press(double feet_per_min, double sim_duration_100s);
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////GLOBAL CONVEYOR STATE VARIABLES///////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//CREATE 3 ARRAYS FOR PT ON PROX COUNTS FOR DELIVERIY TO STACKER DEFINED FROM CONSTANT(S)
+int conveyor_prox_counts[NUM_CONVEYORS] = {
+   DELIVERY_A, BUMP_TURN_IN_A, BUMP_TURN_OUT_A,
+    OVERHEAD_A1, OVERHEAD_A2, OVERHEAD_A3, OVERHEAD_A4,
+    WASTE_CONVEYOR};
+//TRACK PROGRESS OF PRODUCT THROUGH EACH CONVEYOR
+int conveyor_positions[NUM_CONVEYORS] = {0};
+//TRACK PRODUCT THRU CONVEYORS FOR FACT CHECKING
+int product_in_conveyor[NUM_CONVEYORS] = {0};
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////MAIN PROGRAM FOR DETERMINING WHEN WASTE STARTS////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+int main(void) {
+
+//INIT VARIABLES
+    double encoder_count_total = 0, waste_length = 0, feet_per_min = 0, waste_impressions, feet_per_sec = 0;
+    int event_type;
+    bool wastegate_closed = false;
+
+
+//ASK FOR USER INPUT
+    printf("How many feet per minute will the press be running on this job?\n\n");
+    scanf("%lf", &feet_per_min);
+    wastegate_closed = true;
+
+
+//ENSURE SPEED IS FAST ENOUGH TO ALLOW AUTOMATIC OPERATION
+    if ((feet_per_min >= TEN_PERCENT) && (feet_per_min <= MAX_SPEED))  {
+        printf("\n\nPress speed qualifies. Proceeding with simulation. Press will be running %.1f feet/min\n\n", feet_per_min);
+
+//ASK WHICH EVENT IS GOING TO OCCUR
+        printf("\nWhat event would you like to simulate? (Enter number only)\n\n");
+        printf(" 1. Splice\n 2. Blanket Wash\n 3. Hickey Pick\n\n");
+        scanf("%d", &event_type);
+
+//ANNUNCIATE START
+        printf("Simulation started\n\n");
+
+
+//ESTABLISH CASE STATEMENTS FOR EACH EVENT
+        switch (event_type) {
+            case 1:
+                wastegate_closed = false;
+                printf("THIS IS A SPLICE\n\n");
+                waste_length = 400;
+                waste_impressions = ceil(waste_length / CUTOFF_FEET);
+                break;
+            case 2:
+                wastegate_closed = false;
+                printf("THIS IS A BLANKET WASH\n\n");
+                feet_per_sec = feet_per_min / 60;
+                waste_length = WINDOW_LENGTH + feet_per_sec * BLANKET_WASH_SECONDS;
+                waste_impressions = ceil(waste_length / CUTOFF_FEET);
+                break;
+            case 3:
+                printf("THIS IS A HICKEY PICK, IT'S ALSO UNFINISHED!\n\n");
+				waste_length = 0;
+                waste_impressions = 0;
+                break;
+            default:
+                printf("INVALID\n\n");
+                return 1;
+        }
+
+        if (wastegate_closed == false) {
+			encoder_count_total = waste_length / FEET_PER_PULSE_CUT_CYL_ENCODER;
+            printf("Waste quantity will be %.0lf impressions, %.2f feet, and the cut cylinder encoder will generate %.2f positive edge triggers for waste.\n\n", waste_impressions, waste_length, encoder_count_total);
+            simulate_cut_cylinder(feet_per_min, waste_impressions);
+            wastegate_closed = true;
+        }
+
+        printf("\nRunning product through prox conveyor simulation...\n\n");
+        simulate_press(feet_per_min, 100.0); // simulate 100 seconds
+    } else {
+        printf("~ERROR~:\n" 
+				"Running speed is below %.1f, or above %.1f feet/min (min/max automatic speed)\n\nManual events permitted only!\n\n" 
+				"Dont forget to press the inspect PB to register good product after manual event begins!\n\n\n\n", TEN_PERCENT, MAX_SPEED);
+        return 1;
+    }
+
+    return 0;
+}
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////FUNCTION TO TRACK PRODUCTS THROUGH CUT CYLINDER/////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+//FUNCTION DEFINITION
+void simulate_cut_cylinder(double feet_per_min, int waste_impressions) {
+
+//CALCULATE SPEED IN FT/SEC.
+    double feet_per_sec = feet_per_min / 60.0;
+
+
+//INIT VARIABLES TO 0
+    double feet_moved = 0.0;
+    int good_count = 0;
+    int cut_count = 0;
+
+//ANNUNCIATE BEGINNING OF TRACKING AT INDICATED LINEAR SPEED
+    printf("Cut Cylinder Tracking Start (%.2f ft/min)\n", feet_per_min);
+
+
+///////////////////////////////////////////////////////////////
+////////////////////START OF LOOP/////////////////////////////
+//////////////////////////////////////////////////////////////
+
+
+//COMPARE CUT COUNT TO PRE-DETERMINED WASTE, ADD 10 TO SHOW WHEN GOOD PRODUCT STARTS, PRINT AFTER GOOD PRODUCT HAS BEEN CALCULATED
+    while (cut_count < (waste_impressions + 10)) {
+
+
+//BOLDLY ASSUME EVERY WHILE LOOP, LOOP, IS ONE SECOND
+        feet_moved = feet_moved + feet_per_sec;
+
+//CHECK IF ENOUGH FEET HAVE MOVED TO CREATE NEW IMPRESSION
+        while (feet_moved >= CUTOFF_FEET) {
+
+//SUBTRACT 1 SECOND OF MOVEMENT FROM TOTAL 'BAD' PRODUCT MOVED
+            feet_moved = feet_moved - CUTOFF_FEET;
+
+//INCREMENT THE TOTAL NUMBER OF CUTS
+            cut_count = cut_count + 1;
+
+//DETERMINE IF CURRENT IMPRESSION IS WASTE OR GOOD
+            if (cut_count <= waste_impressions) {
+
+//PRINT WHAT KIND OF IMPRESSION WAS JUST CREATED
+                printf("Impression %d = WASTE\n", cut_count);
+            } else {
+                printf("Impression %d = GOOD\n", cut_count);
+                good_count = good_count + 1;
+            }
+        }
+    }
+//PRINT WHEN WASTEGATE SHOULD RIGHTFULLY CLOSE
+    printf("\nWasteGate Close Suggested After Impression %d\n\n", waste_impressions);
+}
+
+
+
+
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////FUNCTION TO SIMULATE DELIVERY CONVEYOR MOVEMENT OF FINISHED PRODUCT////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+
+void simulate_press(double feet_per_min, double sim_duration_100s) {
+    double feet_per_sec = feet_per_min / 60.0;
+//FEET MOVED IS RELATIVE REPRESENTATIVE COUNT OF PROX ROTATIONS TOTAL
+    double feet_moved = 0.0;
+	double footage;
+    int pulses = 0;
+    int i, second;;
+
+    product_in_conveyor[0] = 1;
+
+
+////////////////////////////////////////////////////////////////////////////////////////////
+//////////START OF FOR LOOP, BEGINNING AT TIME INTEGER OF 1 'SECOND'////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////
+
+
+    for (second = 1; second <= sim_duration_100s; second = second + 1) {
+
+        feet_moved = feet_moved + feet_per_sec;
+
+        while (feet_moved >= FEET_PER_PROX_PULSE) {
+
+//**Had massive truncation issues using decimal measures below thanks AI for help**//
+//'Prevents truncation/rounding errors by accumulating partial feet until a full prox pulse distance is reached'//
+
+            feet_moved = feet_moved - FEET_PER_PROX_PULSE;
+
+            pulses = pulses + 1;
+
+
+////////////STARTS TRACKING FROM LAST CONVEYOR INWARDS, TO AVOID MOVING ONE PRODUCT TWICE IN ONE SCAN,//
+// SIMILAR TO MANUALLY CODED OSR INS ON PLCS//////////////
+
+            for (i = NUM_CONVEYORS - 1; i >= 0; i = i - 1) {
+
+//IF A PRODUCT IS IN CONVEYOR 'i'...//
+                if (product_in_conveyor[i]) {
+
+//THAT CONVEYOR HAS ONE MORE PROX PULSE TOWARDS BEING 'DONE' WITH THAT PRODUCT
+                    conveyor_positions[i] = conveyor_positions[i] + 1;
+//EACH CONVEYOR NEEDS # PULSES == 'DONE' THEN....
+                    if (conveyor_positions[i] >= conveyor_prox_counts[i]) {
+//THAT CONVEYOR IS DONE
+                        conveyor_positions[i] = 0;
+                        product_in_conveyor[i] = 0;
+
+
+//THEN PRODUCT MOVES TOWARDS NEX CONVEYOR
+                        if (i + 1 < NUM_CONVEYORS) {
+                            product_in_conveyor[i + 1] = 1;
+                            printf("Prox %d Product advanced to conveyor %d\n", second, i, i + 1);
+                        } else {
+                            printf("Prox %d Product exited final conveyor\n", second, i);
+                      }
+         }
+             }
+          }
+        }
+		footage = pulses * FEET_PER_PROX_PULSE;
+    }
+
+    printf("\n--- SUMMARY ---\nTotal linear footage counted on conveyors: %f. This figure shows start of conveyors, to end.\n\n", footage);
+}
